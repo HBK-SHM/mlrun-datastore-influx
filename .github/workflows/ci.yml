@@ -36,12 +36,12 @@ jobs:
       run: echo "version=$(cat .python-version)" >> $GITHUB_OUTPUT
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ steps.python-version.outputs.version }}
 
     - name: Cache pip dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cache/pip
         key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
@@ -104,7 +104,7 @@ jobs:
       run: echo "version=$(cat .python-version)" >> $GITHUB_OUTPUT
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ steps.python-version.outputs.version }}
 
@@ -122,7 +122,7 @@ jobs:
         python -m twine check dist/*
 
     - name: Upload build artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: dist
         path: dist/
