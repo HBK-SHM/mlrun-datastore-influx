@@ -188,3 +188,13 @@ class InfluxStore(DataStore):
         (Could be extended to write back to Influx.)
         """
         raise NotImplementedError("InfluxStore.put() not supported")
+    @classmethod
+    def from_spec(cls, url: str = "", project=None, secrets=None, **kwargs):
+        """
+        Minimal factory for MLRun's schema registry.
+        MLRun passes this to build a store from a URL scheme.
+        We don't need anything special here; just instantiate.
+        """
+        parent = kwargs.get("parent")  # MLRun passes the StoreManager as parent
+        # name/endpoint are mostly cosmetic for this store
+        return cls(parent=parent, schema="influx", name="influx", endpoint="")

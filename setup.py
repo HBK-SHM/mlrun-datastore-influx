@@ -9,5 +9,8 @@ setup(
         "mlrun.datastore": [
             "influx = mlrun_influx_store:InfluxStore"
         ],
+        "mlrun.datastore.v2": [
+            "influx = mlrun_influx_store:InfluxStore",
+        ],
     },
 )
