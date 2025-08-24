@@ -12,4 +12,13 @@ except Exception:
     # Don’t hard-fail on import; this is just a convenience path.
     pass
 
-__all__ = ["InfluxStore"]
+# Lightweight, lazy re-exports of helper API (avoids importing heavy deps at import time)
+def get_dataitem(uri: str):
+    from .api import get_dataitem as _get_dataitem
+    return _get_dataitem(uri)
+
+def read_df(uri: str):
+    from .api import read_df as _read_df
+    return _read_df(uri)
+
+__all__ = ["InfluxStore", "get_dataitem", "read_df"]
