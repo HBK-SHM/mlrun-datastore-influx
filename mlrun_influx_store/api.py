@@ -99,7 +99,7 @@ def log_dataset(
     ctx.log_dataset(
         key=key,
         df=df,
-        src_path=uri,  # traceability back to Influx (read-only plugin)
+        extra_data={"source_uri.txt": uri},  # traceability back to Influx (read-only plugin)
         labels=final_labels,  # <-- MLRun artifact labels
         tag=tag,  # <-- MLRun artifact version tag (e.g., 'v0')
     )
