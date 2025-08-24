@@ -1,24 +1,21 @@
 # mlrun_influx_store/__init__.py
 from .datastore import InfluxStore
 
-# Best-effort self-registration so the scheme works even if MLRun didn’t load EPs.
-try:
-    # Import after MLRun is importable; if MLRun isn’t installed yet, this no-ops.
-    import mlrun.datastore.datastore as _ds  # type: ignore
-    # MLRun 1.9.x keeps a module-level registry dict named `stores`
-    if hasattr(_ds, "stores") and isinstance(_ds.stores, dict):
-        _ds.stores.setdefault("influx", InfluxStore)
-except Exception:
-    # Don’t hard-fail on import; this is just a convenience path.
-    pass
-
-# Lightweight, lazy re-exports of helper API (avoids importing heavy deps at import time)
+# lazy re-exports to keep import light
 def get_dataitem(uri: str):
-    from .api import get_dataitem as _get_dataitem
-    return _get_dataitem(uri)
+    from .api import get_dataitem as _gd
+    return _gd(uri)
 
 def read_df(uri: str):
-    from .api import read_df as _read_df
-    return _read_df(uri)
+    from .api import read_df as _rd
+    return _rd(uri)
 
-__all__ = ["InfluxStore", "get_dataitem", "read_df"]
+def log_dataset(*args, **kwargs):
+    from .api import log_dataset as _ld
+    return _ld(*args, **kwargs)
+
+def write_df(*args, **kwargs):
+    from .api import write_df as _wd
+    return _wd(*args, **kwargs)
+
+__all__ = ["InfluxStore", "get_dataitem", "read_df", "log_dataset", "write_df"]
