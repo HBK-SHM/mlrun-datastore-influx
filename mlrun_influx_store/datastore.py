@@ -48,7 +48,7 @@ class InfluxStore(DataStore):
         # noinspection PyProtectedMember,PyUnresolvedReferences
         return item._body
 
-    def get(self, key: str, size=None, offset=0):
+    def get(self, key: str, size=None, offset=0,ctx=None):
         """
         Fetch from InfluxDB and return a DataItem with a pandas DataFrame as body.
 
@@ -85,7 +85,11 @@ class InfluxStore(DataStore):
             token = mlrun.get_secret_or_env(token_secret)
         else:
             token = mlrun.get_secret_or_env(f"INFLUX_{env}_TOKEN")
-
+        if not token and ctx is not None:
+            try:
+                token = ctx.get_secret(token_secret or f"INFLUX_{env}_TOKEN")
+            except Exception:
+                token = token  # keep None if not set
         if not influx_url or not influx_org or not token:
             raise ValueError(
                 f"Missing Influx config (env={env}). "

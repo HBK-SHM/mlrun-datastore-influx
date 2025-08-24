@@ -6,9 +6,10 @@ from mlrun.datastore.base import DataItem
 from mlrun.datastore import store_manager
 from .datastore import InfluxStore
 
+
 # --- core helpers ------------------------------------------------------------
 
-def get_dataitem(uri: str) -> DataItem:
+def get_dataitem(uri: str, ctx=None) -> DataItem:
     """
     Return a DataItem that already has the DataFrame loaded in _body.
     This avoids the MLRun path that may call store.as_df('') with an empty url.
@@ -17,12 +18,15 @@ def get_dataitem(uri: str) -> DataItem:
         raise ValueError("URI must start with influx://")
     key = uri.split("://", 1)[1]
     store = InfluxStore(parent=store_manager, schema="influx", name="influx", endpoint="")
-    return store.get(key)  # <-- returns a DataItem with item._body = DataFrame
+    # noinspection PyArgumentList
+    return store.get(key, ctx=ctx)  # <-- pass ctx
+
 
 def read_df(uri: str) -> pd.DataFrame:
     """Return a pandas DataFrame for the given influx:// URI."""
     item = get_dataitem(uri)
     return getattr(item, "_body", None)  # DF is set by store.get(...)
+
 
 # --- logging with MLRun labels & tag -----------------------------------------
 
@@ -33,9 +37,9 @@ def _auto_labels_from_uri(uri: str) -> dict:
     bucket, measurement = path.split("/", 1)
     q = parse_qs(query)
 
-    env   = (q.get("env", ["DEV"])[0] or "DEV").upper()
+    env = (q.get("env", ["DEV"])[0] or "DEV").upper()
     field = q.get("field", [None])[0]
-    rng   = q.get("range", [None])[0]
+    rng = q.get("range", [None])[0]
 
     labels = {
         "store": "influx",
@@ -46,6 +50,7 @@ def _auto_labels_from_uri(uri: str) -> dict:
     if field: labels["field"] = field
     if rng:   labels["range"] = rng
     return labels
+
 
 def _labels_from_columns(df: pd.DataFrame, cols: list[str], max_len: int = 64) -> dict:
     """
@@ -61,6 +66,7 @@ def _labels_from_columns(df: pd.DataFrame, cols: list[str], max_len: int = 64) -
                 val = "|".join(uniq)
                 out[f"col_{c}"] = val[:max_len]
     return out
+
 
 def log_dataset(
         key: str,
@@ -93,16 +99,18 @@ def log_dataset(
     ctx.log_dataset(
         key=key,
         df=df,
-        src_path=uri,          # traceability back to Influx (read-only plugin)
-        labels=final_labels,   # <-- MLRun artifact labels
-        tag=tag,               # <-- MLRun artifact version tag (e.g., 'v0')
+        src_path=uri,  # traceability back to Influx (read-only plugin)
+        labels=final_labels,  # <-- MLRun artifact labels
+        tag=tag,  # <-- MLRun artifact version tag (e.g., 'v0')
     )
     return df
+
 
 # --- optional: write to Influx with Influx tags -------------------------------
 
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
+
 
 def write_df(
         uri: str,
