@@ -94,7 +94,7 @@ class InfluxStore(DataStore):
             raise ValueError(
                 f"Missing Influx config (env={env}). "
                 f"Need url/org/token via URL or env/secrets: "
-                f"INFLUX_{env}_URL, INFLUX_{env}_ORG and INFLUX_{env}_TOKEN"
+                f"INFLUX_{env}_URL : {influx_url}, INFLUX_{env}_ORG : {influx_org} and INFLUX_{env}_TOKEN"
             )
 
         # ---- Build Flux query ----
