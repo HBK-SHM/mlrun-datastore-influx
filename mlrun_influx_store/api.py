@@ -10,18 +10,19 @@ from .datastore import InfluxStore
 
 def get_dataitem(uri: str) -> DataItem:
     """
-    Return a DataItem backed by InfluxStore without relying on MLRun's schema resolver.
+    Return a DataItem that already has the DataFrame loaded in _body.
+    This avoids the MLRun path that may call store.as_df('') with an empty url.
     """
     if not uri.startswith("influx://"):
         raise ValueError("URI must start with influx://")
     key = uri.split("://", 1)[1]
     store = InfluxStore(parent=store_manager, schema="influx", name="influx", endpoint="")
-    # artifact_url keeps the original URI for traceability
-    return DataItem(key, artifact_url=uri, store=store, subpath="")
+    return store.get(key)  # <-- returns a DataItem with item._body = DataFrame
 
 def read_df(uri: str) -> pd.DataFrame:
-    """Read a pandas DataFrame from an influx:// URI."""
-    return get_dataitem(uri).as_df()
+    """Return a pandas DataFrame for the given influx:// URI."""
+    item = get_dataitem(uri)
+    return getattr(item, "_body", None)  # DF is set by store.get(...)
 
 # --- logging with MLRun labels & tag -----------------------------------------
 
