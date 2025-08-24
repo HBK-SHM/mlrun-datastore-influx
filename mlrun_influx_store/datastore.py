@@ -1,9 +1,9 @@
 from urllib.parse import parse_qs
-
-import mlrun
-import mlrun.runtimes.utils
+import os
 import pandas as pd
 from influxdb_client import InfluxDBClient
+
+import mlrun
 from mlrun.datastore.base import DataStore, DataItem
 from mlrun.utils import logger
 
@@ -11,103 +11,86 @@ from mlrun.utils import logger
 class InfluxStore(DataStore):
     """
     MLRun datastore plugin for InfluxDB.
-    Access with URIs like:
 
-        influx://bucket/measurement?field=temp&tag=sensor:bridge01&env=staging&range=-24h
+    Use URIs like:
+        influx://<bucket>/<measurement>?field=<field>&tag=key:val&env=STAGING&range=-24h
+        # optional direct config overrides:
+        &url=http://host:8086&org=my-org&token=...   OR   &token_secret=INFLUX_STAGING_TOKEN
 
-    Requirements:
-    - Project parameters for each environment:
-        INFLUX_DEV_URL, INFLUX_DEV_ORG
-        INFLUX_STAGING_URL, INFLUX_STAGING_ORG
-        INFLUX_PROD_URL, INFLUX_PROD_ORG
-
-    - Project secrets for tokens:
-        INFLUX_DEV_TOKEN
-        INFLUX_STAGING_TOKEN
-        INFLUX_PROD_TOKEN
+    Config resolution order (highest wins):
+      1) URL query params: url=, org=, token=, token_secret=
+      2) Secrets / env: INFLUX_<ENV>_URL, INFLUX_<ENV>_ORG, INFLUX_<ENV>_TOKEN
+         (ENV defaults to DEV)
     """
 
     kind = "influx"
 
+    # ----- MLRun will call this when resolving the scheme via entry points -----
+    @classmethod
+    def from_spec(cls, url: str = "", project=None, secrets=None, **kwargs):
+        # MLRun passes the StoreManager as `parent` in kwargs (when applicable)
+        parent = kwargs.get("parent")
+        return cls(parent=parent, schema="influx", name="influx", endpoint="")
+
     def __init__(self, parent, schema, name, endpoint="", **kwargs):
+        # normal base init
         super().__init__(parent, schema, name, endpoint, **kwargs)
 
+    # ----- Data fetching API -----
     def as_df(self, url, subpath=None, columns=None, df_module=None, format=None, **kwargs):
         """
-        Return dataframe from the InfluxDB query result.
-        Since we've already queried the data and have it in memory,
-        we just need to return it directly.
+        Return a pandas DataFrame.
+        If url is empty (DataItem already has _body), just return it via base logic.
         """
-        # If url is empty, this means we're being called from a DataItem that already has the data
-        # in memory. In this case, we should not re-execute the query but return the cached data.
-        # However, since we don't have access to the DataItem from here, we'll let the base class handle it.
-        if not url or url == "":
-            # Return None to let the DataItem use its cached _body
-            return None
-
-        # Execute the query and return the DataFrame directly
+        if not url:
+            return None  # let DataItem use its cached _body
         item = self.get(url)
-        # noinspection PyProtectedMember
+        # noinspection PyProtectedMember,PyUnresolvedReferences
         return item._body
 
     def get(self, key: str, size=None, offset=0):
         """
-        Fetch a dataset from InfluxDB and return as DataItem with pandas DataFrame.
+        Fetch from InfluxDB and return a DataItem with a pandas DataFrame as body.
 
-        :param key: URI path + query parameters.
-            Format: bucket/measurement?field=<field>&tag=key:val&env=staging&range=-24h
+        key format:  "bucket/measurement?field=<field>&tag=key:val&env=STAGING&range=-24h
+                      [&url=...&org=...&(token=...|token_secret=...)]"
         """
-        # ---- Parse URI ----
-        parts = key.split("?", 1)
-        path = parts[0]
-        query_params = parse_qs(parts[1]) if len(parts) > 1 else {}
-
+        # ---- Parse URI path & query ----
+        path, query = (key.split("?", 1) + [""])[:2]
         if "/" not in path:
-            raise ValueError(
-                f"Invalid key: {key}. Expected format bucket/measurement"
-            )
+            raise ValueError(f"Invalid key: {key}. Expected format 'bucket/measurement'")
 
         bucket, measurement = path.split("/", 1)
-        field_filter = query_params.get("field", [None])[0]
-        tag_filters = query_params.get("tag", [])
-        env = query_params.get("env", ["dev"])[0]
-        range_window = query_params.get("range", ["-1h"])[0]  # default = -1h
+        q = parse_qs(query)
 
-        # ---- Load project config ----
-        # First try to get the current context if one exists
-        context = None
-        try:
-            # Try to get the current global context
-            if hasattr(mlrun.runtimes.utils, 'global_context'):
-                context = mlrun.runtimes.utils.global_context.get()
-        except (AttributeError, ImportError):
-            pass
+        field_filter = q.get("field", [None])[0]
+        tag_filters = q.get("tag", [])
+        env = (q.get("env", ["DEV"])[0] or "DEV").upper()
+        range_window = q.get("range", ["-1h"])[0]
 
-        # If no context found, create/get one
-        if context is None:
-            context = mlrun.get_or_create_ctx("influx-store")
+        # direct overrides (optional)
+        url_override = q.get("url", [None])[0]
+        org_override = q.get("org", [None])[0]
+        token_inline = q.get("token", [None])[0]
+        token_secret = q.get("token_secret", [None])[0]
 
-        # Try to get parameters from context first, then fall back to environment variables
-        url = context.get_param(f"INFLUX_{env.upper()}_URL")
-        org = context.get_param(f"INFLUX_{env.upper()}_ORG")
-        token = mlrun.get_secret_or_env(f"INFLUX_{env.upper()}_TOKEN")
+        # ---- Resolve config: URL / ORG / TOKEN ----
+        influx_url = url_override or os.environ.get(f"INFLUX_{env}_URL")
+        influx_org = org_override or os.environ.get(f"INFLUX_{env}_ORG")
 
-        # Fallback to environment variables if not found in context
-        if not url:
-            import os
-            url = os.environ.get(f"INFLUX_{env.upper()}_URL")
-        if not org:
-            import os
-            org = os.environ.get(f"INFLUX_{env.upper()}_ORG")
-        if not token:
-            import os
-            token = os.environ.get(f"INFLUX_{env.upper()}_TOKEN")
+        token = None
+        if token_inline:
+            token = token_inline
+        elif token_secret:
+            token = mlrun.get_secret_or_env(token_secret)
+        else:
+            token = mlrun.get_secret_or_env(f"INFLUX_{env}_TOKEN")
 
-        if not url or not org or not token:
+        if not influx_url or not influx_org or not token:
             raise ValueError(
-                f"Missing Influx config for env={env}. "
-                f"Expected project params: INFLUX_{env.upper()}_URL, INFLUX_{env.upper()}_ORG "
-                f"and secret: INFLUX_{env.upper()}_TOKEN"
+                f"Missing Influx config (env={env}). "
+                f"Need url/org/token via URL or env/secrets: "
+                f"INFLUX_{env}_URL, INFLUX_{env}_ORG and INFLUX_{env}_TOKEN"
             )
 
         # ---- Build Flux query ----
@@ -116,85 +99,56 @@ class InfluxStore(DataStore):
             f'|> range(start: {range_window}) '
             f'|> filter(fn: (r) => r._measurement == "{measurement}")'
         )
-
         if field_filter:
             query += f' |> filter(fn: (r) => r._field == "{field_filter}")'
-
         for tag in tag_filters:
             if ":" in tag:
                 tagk, tagv = tag.split(":", 1)
                 query += f' |> filter(fn: (r) => r.{tagk} == "{tagv}")'
 
         # ---- Query InfluxDB ----
-        client = InfluxDBClient(url=url, token=token, org=org)
+        client = InfluxDBClient(url=influx_url, token=token, org=influx_org)
         query_api = client.query_api()
         tables = query_api.query(query)
 
         records = []
         for table in tables:
             for record in table.records:
+                # capture remaining tags
+                tags = {
+                    k: v for k, v in record.values.items()
+                    if k not in ["_time", "_field", "_value", "_measurement"]
+                }
                 records.append(
-                    (
-                        record.get_time(),
-                        record.get_field(),
-                        record.get_value(),
-                        record.get_measurement(),
-                        {k: v for k, v in record.values.items()
-                         if k not in ["_time", "_field", "_value", "_measurement"]}
-                    )
+                    (record.get_time(), record.get_field(), record.get_value(),
+                     record.get_measurement(), tags)
                 )
 
         df = pd.DataFrame(records, columns=["time", "field", "value", "measurement", "tags"])
 
-        # ---- Wrap in DataItem with metadata ----
-        # Create DataItem properly - use the key as the artifact URL since we have the data in memory
-        item = DataItem(key, artifact_url=key, store=self, subpath="")
-        # Set the dataframe directly on the item
+        # ---- Wrap in DataItem (with full URL) ----
+        full_url = f"influx://{key}"
+        item = DataItem(full_url, artifact_url=full_url, store=self, subpath="")
         item._body = df
-        # Add metadata to the DataItem if possible
+
+        # (Optional) attach some metadata if available
         try:
-            # Try to update metadata if the item supports it
-            if hasattr(item, '_meta') and item._meta is not None:
-                # noinspection PyUnresolvedReferences
-                item._meta.update({
+            meta = getattr(item, "_meta", None) or getattr(item, "meta", None)
+            if meta is not None:
+                meta.update({
                     "bucket": bucket,
                     "measurement": measurement,
                     "field": field_filter,
                     "tags": tag_filters,
                     "env": env,
                     "range": range_window,
-                    "url": url,
-                    "org": org,
+                    "url": influx_url,
+                    "org": influx_org,
                 })
-            elif hasattr(item, 'meta') and item.meta is not None:
-                item.meta.update({
-                    "bucket": bucket,
-                    "measurement": measurement,
-                    "field": field_filter,
-                    "tags": tag_filters,
-                    "env": env,
-                    "range": range_window,
-                    "url": url,
-                    "org": org,
-                })
-        except (AttributeError, TypeError):
-            # If metadata cannot be set, log a warning but continue
-            logger.warning("Could not set metadata on DataItem")
+        except Exception:  # best-effort
+            logger.warning("Could not set metadata on DataItem", exc_info=False)
+
         return item
 
     def put(self, key: str, obj, append=False, **kwargs):
-        """
-        Write support not implemented yet.
-        (Could be extended to write back to Influx.)
-        """
-        raise NotImplementedError("InfluxStore.put() not supported")
-    @classmethod
-    def from_spec(cls, url: str = "", project=None, secrets=None, **kwargs):
-        """
-        Minimal factory for MLRun's schema registry.
-        MLRun passes this to build a store from a URL scheme.
-        We don't need anything special here; just instantiate.
-        """
-        parent = kwargs.get("parent")  # MLRun passes the StoreManager as parent
-        # name/endpoint are mostly cosmetic for this store
-        return cls(parent=parent, schema="influx", name="influx", endpoint="")
+        raise NotImplementedError("InfluxStore.put() not implemented yet.")
