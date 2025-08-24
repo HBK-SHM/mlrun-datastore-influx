@@ -22,9 +22,9 @@ def get_dataitem(uri: str, ctx=None) -> DataItem:
     return store.get(key, ctx=ctx)  # <-- pass ctx
 
 
-def read_df(uri: str) -> pd.DataFrame:
+def read_df(uri: str, ctx=None) -> pd.DataFrame:
     """Return a pandas DataFrame for the given influx:// URI."""
-    item = get_dataitem(uri)
+    item = get_dataitem(uri,ctx=ctx)
     return getattr(item, "_body", None)  # DF is set by store.get(...)
 
 
@@ -85,7 +85,7 @@ def log_dataset(
     - Optionally promotes selected dataframe columns into MLRun labels (summarized).
     - Records the source as `src_path=uri` so the artifact points back to Influx.
     """
-    df = read_df(uri)
+    df = read_df(uri,ctx)
 
     auto = _auto_labels_from_uri(uri)
     col_labels = _labels_from_columns(df, label_from_columns or [])
