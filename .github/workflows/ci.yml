@@ -134,7 +134,7 @@ jobs:
     needs: test
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/mlrun-influx-store-runtime
+      IMAGE_NAME: ${{ github.repository_owner || toLowerCase() }}/mlrun-influx-store-runtime
       PY_VERSION_TAG: 3.11.13
       MLRUN_VERSION: 1.9.2
     steps:
