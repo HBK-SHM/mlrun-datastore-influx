@@ -128,3 +128,72 @@ jobs:
       with:
         name: dist
         path: dist/
+  docker-image:
+    name: Build & Push runtime image (py3.11.13 + mlrun 1.9.2 + this pkg)
+    runs-on: ubuntu-latest
+    needs: test
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository_owner }}/mlrun-influx-store-runtime
+      PY_VERSION_TAG: 3.11.13
+      MLRUN_VERSION: 1.9.2
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        # (optional, helps if you later want multi-arch)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Dockerfile (inline)
+        run: |
+          cat > Dockerfile <<'EOF'
+          FROM python:3.11.13-slim
+
+          ENV PIP_NO_CACHE_DIR=1 \
+              PYTHONDONTWRITEBYTECODE=1 \
+              PYTHONUNBUFFERED=1 \
+              DEBIAN_FRONTEND=noninteractive
+
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+                git build-essential curl \
+              && rm -rf /var/lib/apt/lists/*
+
+          WORKDIR /app
+          COPY . /app
+
+          # Pin mlrun, then install this repo as a package
+          RUN python -m pip install --upgrade pip \
+              && pip install "mlrun==1.9.2" \
+              && pip install -e . \
+              && python - <<'PY'
+          import sys, mlrun
+          print("Python:", sys.version)
+          print("MLRun:", mlrun.__version__)
+          PY
+
+          # Reasonable default command
+          CMD ["python", "-c", "import mlrun; print('mlrun', mlrun.__version__)"]
+          EOF
+
+      - name: Build & Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:py${{ env.PY_VERSION_TAG }}-mlrun${{ env.MLRUN_VERSION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
