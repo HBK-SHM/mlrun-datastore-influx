@@ -155,4 +155,60 @@ class InfluxStore(DataStore):
         return item
 
     def put(self, key: str, obj, append=False, **kwargs):
-        raise NotImplementedError("InfluxStore.put() not implemented yet.")
+        """
+        Write data to InfluxDB.
+
+        Args:
+            key: "bucket/measurement?env=STAGING[&url=...&org=...&token=...]"
+            obj: pandas DataFrame or list of dicts
+        """
+        # Parse URI path & query
+        path, query = (key.split("?", 1) + [""])[:2]
+        if "/" not in path:
+            raise ValueError(f"Invalid key: {key}. Expected format 'bucket/measurement'")
+        bucket, measurement = path.split("/", 1)
+        q = parse_qs(query)
+        env = (q.get("env", ["DEV"])[0] or "DEV").upper()
+        url_override = q.get("url", [None])[0]
+        org_override = q.get("org", [None])[0]
+        token_inline = q.get("token", [None])[0]
+        token_secret = q.get("token_secret", [None])[0]
+
+        influx_url = url_override or os.environ.get(f"INFLUX_{env}_URL")
+        influx_org = org_override or os.environ.get(f"INFLUX_{env}_ORG")
+        token = token_inline or mlrun.get_secret_or_env(token_secret or f"INFLUX_{env}_TOKEN")
+        if not influx_url or not influx_org or not token:
+            raise ValueError(
+                f"Missing Influx config (env={env}). "
+                f"Need url/org/token via URL or env/secrets: "
+                f"INFLUX_{env}_URL : {influx_url}, INFLUX_{env}_ORG : {influx_org} and INFLUX_{env}_TOKEN"
+            )
+
+        # Prepare data
+        if isinstance(obj, pd.DataFrame):
+            records = obj.to_dict(orient="records")
+        elif isinstance(obj, dict):
+            records = [obj]
+        elif isinstance(obj, list):
+            records = obj
+        else:
+            raise ValueError("obj must be a DataFrame, dict, or list of dicts")
+
+        # Convert records to InfluxDB line protocol
+        points = []
+        for rec in records:
+            tags = rec.get("tags", {})
+            fields = {k: v for k, v in rec.items() if k not in ["time", "tags"]}
+            time = rec.get("time")
+            point = {
+                "measurement": measurement,
+                "tags": tags,
+                "fields": fields,
+                "time": time,
+            }
+            points.append(point)
+
+        # Write to InfluxDB
+        client = InfluxDBClient(url=influx_url, token=token, org=influx_org)
+        write_api = client.write_api()
+        write_api.write(bucket=bucket, record=points)
